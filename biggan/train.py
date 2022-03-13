@@ -32,28 +32,26 @@ SWINT_CONFIG = '/home/ubuntu/ModelExtraction/xerefic/VideoSwinTransformer/config
 SWINT_CKPT = '/home/ubuntu/ModelExtraction/xerefic/VideoSwinTransformer/checkpoints/swin_tiny_patch244_window877_kinetics400_1k.pth'
 
 
-class BigGAN(nn.Module):
+class ModifiedBigGAN(nn.Module):
     
-    def __init__(self, batch_size, num_classes, truncation=0.4):
-        super(BigGAN, self).__init__() 
-        self.latent_dim = latent_dim 
+    def __init__(self, batch_size, num_classes, truncation, device):
+        super(ModifiedBigGAN, self).__init__()
         self.truncation = truncation
         self.batch_size = batch_size 
         self.n_cls = num_classes
+        self.device = device
         
         biggan = BigGAN.from_pretrained('biggan-deep-256')
-        layers = list(biggan.children())[1:]
-        
-        self.gan = nn.Sequential(*layers)
+        self.gan = biggan.generator 
         self.embedding = nn.Embedding(num_classes, 128)
         
     def _sample(self):
         noise = np.random.normal(0, 1, size=(self.batch_size, 128))
         noise = np.clip(noise, -self.truncation, self.truncation)
-        noise = torch.from_numpy(noise).float()
+        noise = torch.from_numpy(noise).float().to(self.device)
         
         class_idx = np.random.randint(0, self.n_cls, size=(self.batch_size,))
-        class_idx = torch.from_numpy(class_idx).long()
+        class_idx = torch.from_numpy(class_idx).long().to(self.device)
         return noise, class_idx
         
     def forward(self):
@@ -61,7 +59,7 @@ class BigGAN(nn.Module):
         embeds = self.embedding(class_idx)
         inp = torch.cat([noise, embeds], -1)
         with torch.no_grad():
-            output = self.gan(inp)
+            output = self.gan(inp, 0.4)
         return output
     
     
@@ -107,7 +105,7 @@ if __name__ == '__main__':
     
     ap = argparse.ArgumentParser()
     ap.add_argument('--device_idx', type=int, default=3)
-    ap.add_argument('--batch_size', type=int, default=512)
+    ap.add_argument('--batch_size', type=int, default=8)
     ap.add_argument('--num_classes', type=int, default=400)
     ap.add_argument('--frame_stack', type=int, default=8)
     ap.add_argument('--train_epochs', type=int, default=500)
@@ -128,12 +126,12 @@ if __name__ == '__main__':
     victim.eval()
     
     # Embedding model
-    biggan = BigGAN(args.batch_size, args.num_classes)
+    biggan = ModifiedBigGAN(args.batch_size, args.num_classes, 0.4, device).to(device)
     
     # Student model 
     with open('model_cfg.yaml', 'r') as f:
         cfg = yaml.safe_load(f)
-    student = Model(cfg)
+    student = Model(cfg).to(device)
     
     # Optimizer and scheduler
     trainable_params = list(biggan.parameters()) + list(student.parameters())
@@ -147,6 +145,7 @@ if __name__ == '__main__':
     if args.log_wandb:
         wandb.init(project='biggan_movinet')
     
+    print("\n[INFO] Beginning training...\n")
     for epoch in range(1, args.train_epochs+1):
         trainmeter = AverageMeter()
         student.train()
@@ -154,17 +153,17 @@ if __name__ == '__main__':
         
         for step in range(args.steps_per_epoch):
             imgs = biggan()
-            bs, c, h, w = img.size()
+            bs, c, h, w = imgs.size()
             imgs = imgs.repeat(1, args.frame_stack, 1, 1).view(-1, args.frame_stack, c, h, w)
             
             with torch.no_grad():
-                gt_logits = victim(imgs.tranpose(1, 2).contiguous())
+                gt_logits = victim.cls_head(victim.backbone(imgs.transpose(1, 2).contiguous()))
                 gt_labels = gt_logits.argmax(-1)
             
             pred_logits = student(imgs)
             pred_labels = pred_logits.argmax(-1)
             
-            kl_loss = F.kl_div(F.log_softmax(pred_logits, 1), F.softmax(gt_logits, 1))
+            kl_loss = F.kl_div(F.log_softmax(pred_logits, 1), F.softmax(gt_logits, 1), reduction='batchmean')
             xent_loss = F.cross_entropy(pred_logits, gt_labels)
             loss = args.kl_loss_weight * kl_loss + (1-args.kl_loss_weight) * xent_loss 
             
@@ -180,7 +179,9 @@ if __name__ == '__main__':
                 wandb.log(metrics)
                 
             pbar((step+1)/args.steps_per_epoch, desc='[Train] Epoch {:4d}'.format(epoch), status=trainmeter.msg())
-        
+            break
+
+        print()
         scheduler.step()
             
         if epoch % args.eval_interval == 0:
@@ -188,34 +189,34 @@ if __name__ == '__main__':
             student.eval()
             biggan.eval()
             
-            with torch.no_grad():
-                imgs = biggan()
-                bs, c, h, w = img.size()
-                imgs = imgs.repeat(1, args.frame_stack, 1, 1).view(-1, args.frame_stack, c, h, w)
-                
+            for step in range(args.steps_per_epoch):
                 with torch.no_grad():
-                    gt_logits = victim(imgs.tranpose(1, 2).contiguous())
+                    imgs = biggan()
+                    bs, c, h, w = imgs.size()
+                    imgs = imgs.repeat(1, args.frame_stack, 1, 1).view(-1, args.frame_stack, c, h, w)
+                    
+                    gt_logits = victim.cls_head(victim.backbone(imgs.transpose(1, 2).contiguous()))
                     gt_labels = gt_logits.argmax(-1)
-                
-                pred_logits = student(imgs)
-                pred_labels = pred_logits.argmax(-1)
-                
-                kl_loss = F.kl_div(F.log_softmax(pred_logits, 1), F.softmax(gt_logits, 1))
-                xent_loss = F.cross_entropy(pred_logits, gt_labels)
-                loss = args.kl_loss_weight * kl_loss + (1-args.kl_loss_weight) * xent_loss 
+                    
+                    pred_logits = student(imgs)
+                    pred_labels = pred_logits.argmax(-1)
+                    
+                    kl_loss = F.kl_div(F.log_softmax(pred_logits, 1), F.softmax(gt_logits, 1), reduction='batchmean')
+                    xent_loss = F.cross_entropy(pred_logits, gt_labels)
+                    loss = args.kl_loss_weight * kl_loss + (1-args.kl_loss_weight) * xent_loss 
 
-                acc = torch.eq(pred_labels, gt_labels.view_as(pred_labels)).sum().item() / gt_labels.numel()
-                metrics = {'accuracy': acc, 'kl_loss': kl_loss.item(), 'xent_loss': xent_loss.item()}
-                valmeter.add(metrics)
-                
-                pbar((step+1)/args.steps_per_epoch, desc='[ Val ] Epoch {:4d}'.format(epoch), status=valmeter.msg())
-                
+                    acc = torch.eq(pred_labels, gt_labels.view_as(pred_labels)).sum().item() / gt_labels.numel()
+                    metrics = {'accuracy': acc, 'kl_loss': kl_loss.item(), 'xent_loss': xent_loss.item()}
+                    valmeter.add(metrics)
+                    
+                    pbar((step+1)/args.steps_per_epoch, desc='[ Val ] Epoch {:4d}'.format(epoch), status=valmeter.msg())
+                    
+            avg = valmeter.avg()
             if args.log_wandb:
-                avg = valmeter.avg()
                 wandb.log({'epoch': epoch, 'val accuracy': avg['accuracy'], 
                            'val kl_loss': avg['kl_loss'], 'val xent_loss': avg['xent_loss']})
                 
-            total_loss = args.kl_loss_weight * avg['kl_loss'] + (1-args.kl_loss_weight) * args['xent_loss']
+            total_loss = args.kl_loss_weight * avg['kl_loss'] + (1-args.kl_loss_weight) * avg['xent_loss']
             if total_loss < best_loss:
                 best_loss = total_loss
                 state = {

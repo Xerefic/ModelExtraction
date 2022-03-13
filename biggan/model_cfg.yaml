@@ -1,3 +1,22 @@
+device: cuda:3
+out_dir: ./exp01
+train:
+  train_file: /home/ubuntu/ModelExtraction/data/Moments_in_time/rawframes/training/
+  epochs: 40
+  lr: 0.0003
+  batch_size: 4
+  num_workers: 4
+  pin_memory: True
+  shuffle: True
+  #lambda 0 -> KL, lambda 1 -> CrossEnt
+  lambda: 0.2
+  #ratio of data for eval
+  split_ratio: 0.1
+  # eval frequency
+  eval_freq: 1
+  # save frequency
+  save_freq: 1
+
 model:
   classes: 400
   #maxpool or weighted
@@ -14,4 +33,7 @@ model:
     version: 60                       
 
     #Resnet version or 'imagenet' for dla
-    pretrained: resnet50 
+    pretrained: resnet50              
+
+transform:
+  input_size: 224  
