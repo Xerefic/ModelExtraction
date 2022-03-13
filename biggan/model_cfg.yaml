@@ -1,0 +1,17 @@
+model:
+  classes: 400
+  #maxpool or weighted
+  agg: weighted 
+  backbone:
+    #resnet or dla
+    name: resnet                      
+
+    #bottleneck or basic
+    resnet_block: bottleneck          
+    resnet_layers: [3,4,6,3]
+
+    #Version number for DLA in [34, 60, 102, 169]
+    version: 60                       
+
+    #Resnet version or 'imagenet' for dla
+    pretrained: resnet50 

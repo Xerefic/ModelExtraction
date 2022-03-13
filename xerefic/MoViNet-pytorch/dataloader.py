@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 
 import os
+import cv2
 import glob
 import time
 import random
@@ -37,7 +38,7 @@ class TrainingArgs():
     image_size: int = 224
     temporal_history: int = 16
 
-    train_file: str = '/home/ubuntu/ModelExtraction/data/Moments_in_time/rawframes/training/'
+    train_file: str = '/home/ubuntu/ModelExtraction/new/Video-Swin-Transformer/data/mit/videos/training'
     valid_file: str = None
     test_file: str = None
     checkpoint: str = None
@@ -57,7 +58,7 @@ class CreateDataset(torch.utils.data.Dataset):
     def __init__(self, args, mode='Training'):
         self.args = args
         self.mode = mode
-        self._init_dataset()
+        self._init_video_dataset()
         self.transforms = transforms.Compose(
             [
                 transforms.Resize((256, 256)),
@@ -66,8 +67,8 @@ class CreateDataset(torch.utils.data.Dataset):
                 # transforms.Resize((224, 224)),
                 transforms.RandomHorizontalFlip(0.5),
                 transforms.ToTensor(),
-                transforms.Normalize(mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375]),
-
+                transforms.Normalize(mean=[123.675/255, 116.28/255, 103.53/255], 
+                                     std=[58.395/255, 57.12/255, 57.375/255]),
             ]
         )
         # self.transform = Compose(self.args.transform)
@@ -103,12 +104,44 @@ class CreateDataset(torch.utils.data.Dataset):
         else:
             print("No Such Dataset Mode")
             return None
+        
+    def _init_video_dataset(self):
+        self.data = []
+        
+        classes = sorted(os.listdir(self.args.train_file))
+        for classname in classes:
+            videos = sorted(glob.glob(os.path.join(self.args.train_file, classname, '*.mp4')))
+            for vidfile in videos:
+                video = cv2.VideoCapture(vidfile)
+                success, frame = video.read()
+                buffer = []
+                while success:
+                    buffer.append(frame)
+                    if len(buffer) == 8:
+                        self.data.append({'Class': classname, 'Video': vidfile, 'Images': buffer})
+                        buffer = []
+                    success, frame = vid.read()
 
+    # def __getitem__(self, index):
+
+    #     img = torch.empty((0, 3, 224, 224))
+    #     for i in range(len(self.data[index]['Images'])):
+    #         image = Image.open(self.data[index]['Images'][i])
+    #         image = self.transforms(image)
+    #         image = image.unsqueeze(0)
+    #         img = torch.cat((img, image), dim = 0)
+    #     img = img.transpose(1, 0)
+    #     images = self.data[index]['Images']
+    #     label = self.data[index]['Class']
+    #     videoname = self.data[index]['Video']
+
+    #     return img, label, videoname, images
+    
     def __getitem__(self, index):
+        ''' To be used if init function is _init_video_dataset '''
 
         img = torch.empty((0, 3, 224, 224))
         for i in range(len(self.data[index]['Images'])):
-            image = Image.open(self.data[index]['Images'][i])
             image = self.transforms(image)
             image = image.unsqueeze(0)
             img = torch.cat((img, image), dim = 0)
