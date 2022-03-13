@@ -179,9 +179,7 @@ if __name__ == '__main__':
                 wandb.log(metrics)
                 
             pbar((step+1)/args.steps_per_epoch, desc='[Train] Epoch {:4d}'.format(epoch), status=trainmeter.msg())
-            break
-
-        print()
+            
         scheduler.step()
             
         if epoch % args.eval_interval == 0:
