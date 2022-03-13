@@ -15,6 +15,9 @@ from models.model import Model
 from torchvision import models
 from datetime import datetime as dt
 from pytorch_pretrained_biggan import BigGAN
+from mmcv import Config, DictAction
+from mmaction.models import build_model
+from mmcv.runner import get_dist_info, init_dist, load_checkpoint
 
 
 COLORS = {
@@ -25,11 +28,14 @@ COLORS = {
     "end": "\033[0m"
 }
 
+SWINT_CONFIG = '/home/ubuntu/ModelExtraction/xerefic/VideoSwinTransformer/configs/recognition/swin/swin_tiny_patch244_window877_kinetics400_1k.py'
+SWINT_CKPT = '/home/ubuntu/ModelExtraction/xerefic/VideoSwinTransformer/checkpoints/swin_tiny_patch244_window877_kinetics400_1k.pth'
 
-class Movinet_BigGAN(nn.Module):
+
+class BigGAN(nn.Module):
     
     def __init__(self, batch_size, num_classes, truncation=0.4):
-        super(Movinet_BigGAN, self).__init__() 
+        super(BigGAN, self).__init__() 
         self.latent_dim = latent_dim 
         self.truncation = truncation
         self.batch_size = batch_size 
@@ -115,11 +121,14 @@ if __name__ == '__main__':
     
     # Victim model
     device = torch.device("cuda:{}".format(args.device_idx) if torch.cuda.is_available() else "cpu")
-    movinet = MoViNet(_C.MODEL.MoViNetA2, causal=True, pretrained=True).to(device)
-    movinet.eval()
+    cfg = Config.fromfile(SWINT_CONFIG)
+    victim = build_model(cfg.model, train_cfg=None, test_cfg=cfg.get('test_cfg')).to(device)
+    load_checkpoint(victim, SWINT_CKPT, map_location=device)
+    next(victim.parameters()).device
+    victim.eval()
     
     # Embedding model
-    biggan = Movinet_BigGAN(args.batch_size, args.num_classes)
+    biggan = BigGAN(args.batch_size, args.num_classes)
     
     # Student model 
     with open('model_cfg.yaml', 'r') as f:
@@ -149,7 +158,7 @@ if __name__ == '__main__':
             imgs = imgs.repeat(1, args.frame_stack, 1, 1).view(-1, args.frame_stack, c, h, w)
             
             with torch.no_grad():
-                gt_logits = movinet(imgs)
+                gt_logits = victim(imgs.tranpose(1, 2).contiguous())
                 gt_labels = gt_logits.argmax(-1)
             
             pred_logits = student(imgs)
@@ -185,7 +194,7 @@ if __name__ == '__main__':
                 imgs = imgs.repeat(1, args.frame_stack, 1, 1).view(-1, args.frame_stack, c, h, w)
                 
                 with torch.no_grad():
-                    gt_logits = movinet(imgs)
+                    gt_logits = victim(imgs.tranpose(1, 2).contiguous())
                     gt_labels = gt_logits.argmax(-1)
                 
                 pred_logits = student(imgs)
