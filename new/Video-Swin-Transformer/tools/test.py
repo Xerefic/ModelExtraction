@@ -167,6 +167,8 @@ def inference_pytorch(args, cfg, distributed, data_loader):
         outputs = multi_gpu_test(model, data_loader, args.tmpdir,
                                  args.gpu_collect)
 
+        
+
     return outputs
 
 
