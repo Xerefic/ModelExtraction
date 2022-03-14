@@ -1,4 +1,4 @@
-device: cuda:3
+
 out_dir: ./exp01
 train:
   train_file: /home/ubuntu/ModelExtraction/data/Moments_in_time/rawframes/training/
