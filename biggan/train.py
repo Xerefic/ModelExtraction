@@ -107,9 +107,10 @@ def kinetics_name_to_idx():
         lines = f.read().split('\n')
     mapping = {}
     for line in lines:
-        fname, idx = line.split()
-        classname = fname.split('/')[0]
-        mapping[classname] = int(idx)
+        if len(line) > 0:
+            fname, idx = line.split()
+            classname = fname.split('/')[0]
+            mapping[classname] = int(idx)
     return mapping
 
 
@@ -137,7 +138,7 @@ def eval_on_kinetics(data_root, student_ckpt_dir):
     clswise_count = {name: 0 for name in enumerate(cls_folders)}
 
     for folder in cls_folders:
-        vidfiles = sorted(os.listdir(os.path.join(data_root, folder)))
+        vidfiles = sorted([f for f in os.listdir(os.path.join(data_root, folder)) if f.endswith('mp4')])
         for i, vf in enumerate(vidfiles):
             path = os.path.join(data_root, folder, vf)
             vid = cv2.VideoCapture(path)
@@ -152,6 +153,8 @@ def eval_on_kinetics(data_root, student_ckpt_dir):
                 count += 1
                 if count % chunksize == 0 and len(buffer) < 8:
                     buffer.append(frame)
+
+                success, frame = vid.read()
             
             frames = np.stack(buffer, 0)
             frames = torch.from_numpy(frames).float().permute(0, 3, 1, 2).contiguous()
@@ -164,7 +167,7 @@ def eval_on_kinetics(data_root, student_ckpt_dir):
                 clswise_correct[folder] += 1
             clswise_count[folder] += 1
 
-        pbar((i+1)/len(vidfiles), desc=folder, status='')
+            pbar((i+1)/len(vidfiles), desc=folder, status='')
 
     clswise_acc = {}
     for folder in clswise_correct.keys():
@@ -301,6 +304,6 @@ if __name__ == '__main__':
 
     elif args.task == 'kinetics_eval':
         eval_on_kinetics(
-            data_root='../data/kinetics400/validation',
+            data_root='../new/Video-Swin-Transformer/data/kinetics400/validation',
             student_ckpt_dir='biggan/13-03-2022_18-55'
         )
