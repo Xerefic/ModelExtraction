@@ -2,6 +2,7 @@
 import os
 import cv2
 import yaml
+import json
 import torch 
 import wandb
 import argparse
@@ -61,7 +62,7 @@ class ModifiedBigGAN(nn.Module):
         inp = torch.cat([noise, embeds], -1)
         with torch.no_grad():
             output = self.gan(inp, 0.4)
-        return output
+        return output, class_idx
     
     
 class AverageMeter:
@@ -115,12 +116,7 @@ def kinetics_name_to_idx():
 
 
 @torch.no_grad()
-def eval_on_kinetics(data_root, student_ckpt_dir):
-
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    with open('model_cfg.yaml', 'r') as f:
-        cfg = yaml.safe_load(f)
-    student_model = Model(cfg).to(device)
+def eval_on_kinetics(data_root, student_model):
 
     transform = transforms.Compose([
         transforms.Resize((256, 256)),
@@ -128,9 +124,6 @@ def eval_on_kinetics(data_root, student_ckpt_dir):
         transforms.ToTensor(),
         transforms.Normalize(mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375])
     ])
-
-    state = torch.load(os.path.join(student_ckpt_dir, 'checkpoint.pth.tar'), map_location=device)
-    student_model.load_state_dict(state['student'])
 
     cls_folders = sorted(os.listdir(data_root))        
     name_to_idx = kinetics_name_to_idx()
@@ -173,7 +166,7 @@ def eval_on_kinetics(data_root, student_ckpt_dir):
     for folder in clswise_correct.keys():
         clswise_acc[folder] = clswise_correct[folder] / clswise_count[folder]
     
-    print(clswise_acc)
+    return clswise_acc
 
     
 if __name__ == '__main__':
@@ -212,25 +205,56 @@ if __name__ == '__main__':
         student = Model(cfg).to(device)
         
         # Optimizer and scheduler
-        trainable_params = list(biggan.parameters()) + list(student.parameters())
-        optimizer = optim.RMSprop(trainable_params, lr=args.lr, weight_decay=args.weight_decay)
-        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.train_epochs, eta_min=1e-06)
+        embed_optim = optim.RMSprop(biggan.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+        student_optim = optim.RMSprop(student.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+        embed_sched = optim.lr_scheduler.CosineAnnealingLR(embed_optim, T_max=args.train_epochs, eta_min=1e-06)
+        student_sched = optim.lr_scheduler.CosineAnnealingLR(student_optim, T_max=args.train_epochs, eta_min=1e-06)
         
         outdir = os.path.join('biggan', dt.now().strftime('%d-%m-%Y_%H-%M'))
         os.makedirs(outdir, exist_ok=True)
-        best_loss = float('inf')
+        best_acc = 0
         
         if args.log_wandb:
             wandb.init(project='biggan_movinet')
         
         print("\n[INFO] Beginning training...\n")
         for epoch in range(1, args.train_epochs+1):
-            trainmeter = AverageMeter()
+            # embed_trainmeter = AverageMeter()
+            # biggan.train()
+
+            # for step in range(args.steps_per_epoch // 2):
+            #     imgs, class_idx = biggan()
+            #     bs, c, h, w = imgs.size()
+            #     imgs = imgs.repeat(1, args.frame_stack, 1, 1).view(-1, args.frame_stack, c, h, w)
+
+            #     gt_logits = victim.cls_head(victim.backbone(imgs.transpose(1, 2).contiguous()))
+            #     loss = F.cross_entropy(gt_logits, class_idx)
+            #     preds = gt_logits.argmax(-1)
+            #     acc = torch.eq(preds, class_idx.view_as(preds)).sum().item() / preds.numel()
+
+            #     embed_optim.zero_grad()
+            #     loss.backward()
+            #     embed_optim.step()
+
+            #     metrics = {'embed_loss': loss.item(), 'embed_acc': acc}
+            #     embed_trainmeter.add(metrics)
+
+            #     if args.log_wandb:
+            #         wandb.log(metrics)
+
+            #     pbar(
+            #         progress=(step+1)/(args.steps_per_epoch//2), 
+            #         desc='[Embed train] Epoch {:4d}'.format(epoch),
+            #         status=embed_trainmeter.msg()
+            #     )
+
+            student_trainmeter = AverageMeter()
             student.train()
             biggan.train()
             
             for step in range(args.steps_per_epoch):
-                imgs = biggan()
+                
+                imgs, _ = biggan()
                 bs, c, h, w = imgs.size()
                 imgs = imgs.repeat(1, args.frame_stack, 1, 1).view(-1, args.frame_stack, c, h, w)
                 
@@ -245,62 +269,118 @@ if __name__ == '__main__':
                 xent_loss = F.cross_entropy(pred_logits, gt_labels)
                 loss = args.kl_loss_weight * kl_loss + (1-args.kl_loss_weight) * xent_loss 
                 
-                optimizer.zero_grad()
+                student_optim.zero_grad()
                 loss.backward()
-                optimizer.step()
+                student_optim.step()
                 
                 acc = torch.eq(pred_labels, gt_labels.view_as(pred_labels)).sum().item() / gt_labels.numel()
                 metrics = {'accuracy': acc, 'kl_loss': kl_loss.item(), 'xent_loss': xent_loss.item()}
-                trainmeter.add(metrics)
+                student_trainmeter.add(metrics)
                 
                 if args.log_wandb:
                     wandb.log(metrics)
                     
-                pbar((step+1)/args.steps_per_epoch, desc='[Train] Epoch {:4d}'.format(epoch), status=trainmeter.msg())
+                pbar(
+                    progress=(step+1)/args.steps_per_epoch, 
+                    desc='[Stdnt train] Epoch {:4d}'.format(epoch), 
+                    status=student_trainmeter.msg()
+                )
+                break
+            print()
 
-            scheduler.step()
+            # embed_sched.step()
+            student_sched.step()
                 
+            # Evaluation
             if epoch % args.eval_interval == 0:
-                valmeter = AverageMeter()
-                student.eval()
-                biggan.eval()
-                
-                for step in range(args.steps_per_epoch):
-                    with torch.no_grad():
-                        imgs = biggan()
-                        bs, c, h, w = imgs.size()
-                        imgs = imgs.repeat(1, args.frame_stack, 1, 1).view(-1, args.frame_stack, c, h, w)
-                        
-                        gt_logits = victim.cls_head(victim.backbone(imgs.transpose(1, 2).contiguous()))
-                        gt_labels = gt_logits.argmax(-1)
-                        
-                        pred_logits = student(imgs)
-                        pred_labels = pred_logits.argmax(-1)
-                        
-                        kl_loss = F.kl_div(F.log_softmax(pred_logits, 1), F.softmax(gt_logits, 1), reduction='batchmean')
-                        xent_loss = F.cross_entropy(pred_logits, gt_labels)
-                        loss = args.kl_loss_weight * kl_loss + (1-args.kl_loss_weight) * xent_loss 
 
-                        acc = torch.eq(pred_labels, gt_labels.view_as(pred_labels)).sum().item() / gt_labels.numel()
-                        metrics = {'accuracy': acc, 'kl_loss': kl_loss.item(), 'xent_loss': xent_loss.item()}
-                        valmeter.add(metrics)
-                        
-                        pbar((step+1)/args.steps_per_epoch, desc='[ Val ] Epoch {:4d}'.format(epoch), status=valmeter.msg())
-                        
-                avg = valmeter.avg()
-                if args.log_wandb:
-                    wandb.log({'epoch': epoch, 'val accuracy': avg['accuracy'], 
-                            'val kl_loss': avg['kl_loss'], 'val xent_loss': avg['xent_loss']})
+                with torch.no_grad():
+                    clswise_acc = eval_on_kinetics(
+                        data_root='../new/Video-Swin-Transformer/data/kinetics400/validation',
+                        student_model=student
+                    )
+
+                with open(os.path.join(outdir, f'clswise_acc_epoch_{epoch}.json'), 'w') as f:
+                    json.dump(clswise_acc, indent=4)
+
+                # embed_valmeter = AverageMeter()
+                # biggan.eval()
+                # student.eval()
+
+                # for step in range(args.steps_per_epoch // 2):
+                #     with torch.no_grad():
+                #         imgs, class_idx = biggan()
+                #         bs, c, h, w = imgs.size()
+                #         imgs = imgs.repeat(1, args.frame_stack, 1, 1).view(-1, args.frame_stack, c, h, w)
+                #         gt_logits = victim.cls_head(victim.backbone(imgs.transpose(1, 2).contiguous()))
+
+                #     loss = F.cross_entropy(gt_logits, class_idx)
+                #     preds = gt_logits.argmax(-1)
+                #     acc = torch.eq(preds, class_idx.view_as(preds)).sum().item() / preds.numel()
                     
-                total_loss = args.kl_loss_weight * avg['kl_loss'] + (1-args.kl_loss_weight) * avg['xent_loss']
-                if total_loss < best_loss:
-                    best_loss = total_loss
+                #     metrics = {'embed_loss': loss.item(), 'embed_acc': acc}
+                #     embed_valmeter.add(metrics)
+
+                #     pbar(
+                #         progress=(step+1)/(args.steps_per_epoch // 2), 
+                #         desc='[Embed val] Epoch {:4d}'.format(epoch),
+                #         status=embed_valmeter.msg()
+                #     )
+
+                # avg = embed_valmeter.avg()
+                # if args.log_wandb:
+                #     wandb.log({
+                #         'epoch': epoch, 
+                #         'val embed_loss': avg['embed_loss'], 
+                #         'val embed_acc': avg['embed_acc']
+                #     })
+
+                # student_valmeter = AverageMeter()
+                # biggan.eval()
+                # student.eval()
+
+                # for step in range(args.steps_per_epoch):
+                    
+                #     with torch.no_grad():
+                #         imgs, _ = biggan()
+                #         bs, c, h, w = imgs.size()
+                #         imgs = imgs.repeat(1, args.frame_stack, 1, 1).view(-1, args.frame_stack, c, h, w)
+                        
+                #         gt_logits = victim.cls_head(victim.backbone(imgs.transpose(1, 2).contiguous()))
+                #         gt_labels = gt_logits.argmax(-1)
+                #         pred_logits = student(imgs)
+                #         pred_labels = pred_logits.argmax(-1)
+                        
+                #     kl_loss = F.kl_div(F.log_softmax(pred_logits, 1), F.softmax(gt_logits, 1), reduction='batchmean')
+                #     xent_loss = F.cross_entropy(pred_logits, gt_labels)
+                #     loss = args.kl_loss_weight * kl_loss + (1-args.kl_loss_weight) * xent_loss 
+                    
+                #     acc = torch.eq(pred_labels, gt_labels.view_as(pred_labels)).sum().item() / gt_labels.numel()
+                #     metrics = {'accuracy': acc, 'kl_loss': kl_loss.item(), 'xent_loss': xent_loss.item()}
+                #     student_valmeter.add(metrics)
+                                            
+                #     pbar(
+                #         progress=(step+1)/args.steps_per_epoch, 
+                #         desc='[Stdnt val] Epoch {:4d}'.format(epoch), 
+                #         status=student_valmeter.msg()
+                #     )
+                        
+                avg = 0
+                for name, acc in clswise_acc.items():
+                    avg += acc
+                avg /= len(clswise_acc)
+
+                if args.log_wandb:
+                    wandb.log({'epoch': epoch, 'avg kinetics acc': avg})
+                    
+                if avg > best_acc:
+                    best_acc = avg
                     state = {
                         'epoch': epoch,
                         'student': student.state_dict(),
                         'gan': biggan.state_dict()
                     }
-                    torch.save(state, os.path.join(outdir, 'checkpoint.pth.tar'))
+                    torch.save(state, os.path.join(outdir, 'checkpoint_type1.pth.tar'))
 
     elif args.task == 'kinetics_eval':
         eval_on_kinetics(
