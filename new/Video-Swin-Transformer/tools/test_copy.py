@@ -3,6 +3,8 @@ import os
 import os.path as osp
 import warnings
 import pickle as pkl
+import random
+import numpy as np
 
 from sympy import re
 from torchvision.utils import save_image
@@ -191,7 +193,7 @@ def inference_pytorch(args, cfg, distributed, data_loader):
             for i in range(data['imgs'].shape[1]):
                 result_sub = model(data['imgs'][:, i].to(device)).unsqueeze(1).cpu()
                 result = torch.cat((result, result_sub), 1)
-        results.extend(result)
+        results.tend(result)
         # use the first key as main key to calculate the batch size
         batch_size = len(next(iter(data.values())))
         for _ in range(batch_size):
@@ -405,4 +407,5 @@ if __name__ == '__main__':
 
 
 # # python3 tools/test_copy.py /home/ubuntu/ModelExtraction/new/Video-Swin-Transformer/configs/recognition/swin/swin_tiny_patch244_window877_kinetics400_1k.py /home/ubuntu/ModelExtraction/new/Video-Swin-Transformer/checkpoints/swin_tiny_patch244_window877_kinetics400_1k.pth --eval top_k_accuracy
+# # export PYTHONPATH=$PYTHONPATH:"/home/ubuntu/ModelExtraction/new/Video-Swin-Transformer"
 

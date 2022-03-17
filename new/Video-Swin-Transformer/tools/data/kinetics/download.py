@@ -182,17 +182,20 @@ def main(input_csv,
     # Creates folders where videos will be saved later.
     label_to_dir = create_video_folders(dataset, output_dir, tmp_dir)
 
-    # Download all clips.
-    if num_jobs == 1:
-        status_list = []
-        for _, row in dataset.iterrows():
-            status_list.append(
-                download_clip_wrapper(row, label_to_dir, trim_format, tmp_dir))
-    else:
-        status_list = Parallel(
-            n_jobs=num_jobs)(delayed(download_clip_wrapper)(
-                row, label_to_dir, trim_format, tmp_dir)
-                             for i, row in dataset.iterrows())
+    
+    try: # Download all clips.
+        if num_jobs == 1:
+            status_list = []
+            for _, row in dataset.iterrows():
+                status_list.append(
+                    download_clip_wrapper(row, label_to_dir, trim_format, tmp_dir))
+        else:
+            status_list = Parallel(
+                n_jobs=num_jobs)(delayed(download_clip_wrapper)(
+                    row, label_to_dir, trim_format, tmp_dir)
+                                for i, row in dataset.iterrows())
+    except:
+        pass
 
     # Clean tmp dir.
     shutil.rmtree(tmp_dir)

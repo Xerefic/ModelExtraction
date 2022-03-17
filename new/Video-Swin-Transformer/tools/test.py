@@ -3,6 +3,8 @@ import os
 import os.path as osp
 import warnings
 import pickle as pkl
+import random
+import numpy as np
 
 import mmcv
 import torch
@@ -16,6 +18,12 @@ from mmcv.runner.fp16_utils import wrap_fp16_model
 from mmaction.datasets import build_dataloader, build_dataset
 from mmaction.models import build_model
 from mmaction.utils import register_module_hooks
+
+random.seed(17)
+np.random.seed(17)
+torch.manual_seed(17)
+torch.cuda.manual_seed(17)
+torch.cuda.manual_seed_all(17)
 
 # TODO import test functions from mmcv and delete them from mmaction2
 try:
@@ -144,6 +152,7 @@ def inference_pytorch(args, cfg, distributed, data_loader):
     # build the model and load checkpoint
     model = build_model(
         cfg.model, train_cfg=None, test_cfg=cfg.get('test_cfg'))
+    model = model.to('cuda:1')
 
     if len(cfg.module_hooks) > 0:
         register_module_hooks(model, cfg.module_hooks)
@@ -151,10 +160,33 @@ def inference_pytorch(args, cfg, distributed, data_loader):
     fp16_cfg = cfg.get('fp16', None)
     if fp16_cfg is not None:
         wrap_fp16_model(model)
-    load_checkpoint(model, args.checkpoint, map_location='cpu')
+    load_checkpoint(model, args.checkpoint, map_location='cuda:1')
 
     if args.fuse_conv_bn:
         model = fuse_conv_bn(model)
+    
+    model.eval()
+    results = []
+    dataset = data_loader.dataset
+    prog_bar = mmcv.ProgressBar(len(dataset))
+    for data in data_loader:
+        with torch.no_grad():
+            data['imgs'] = data['imgs'].to('cuda:1')
+            result = model(return_loss=False, **data)
+            break
+        results.extend(result)
+        
+        # use the first key as main key to calculate the batch size
+        batch_size = len(next(iter(data.values())))
+        for _ in range(batch_size):
+            prog_bar.update()
+        with open('/home/ubuntu/ModelExtraction/new/Video-Swin-Transformer/checkpoints/moments/logits_new.pkl', 'wb') as f:
+            #x = pickle.load(f)
+            #print(torch.sum(result==x[0]).item())
+            #quit()
+            pkl.dump(results, f)
+
+    return results
 
     if not distributed:
         model = MMDataParallel(model, device_ids=[3])
@@ -352,7 +384,7 @@ def main():
         print("output")
         outputs = inference_pytorch(args, cfg, distributed, data_loader)
 
-    with open('/home/ubuntu/ModelExtraction/new/Video-Swin-Transformer/checkpoints/moments/logits.pkl', 'wb') as f:
+    with open('/home/ubuntu/ModelExtraction/new/Video-Swin-Transformer/checkpoints/moments/logits_new.pkl', 'wb') as f:
         pkl.dump(outputs, f)
         print("\n\n\n\n Dumped \n\n\n\n")
 

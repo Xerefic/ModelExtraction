@@ -37,6 +37,8 @@ class Resnet(torchvision.models.ResNet):
 
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # print(x.shape)
+        # quit()
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)

@@ -1,0 +1,24 @@
+{
+    "os": "Linux-5.4.0-1060-aws-x86_64-with-debian-buster-sid",
+    "python": "3.7.12",
+    "heartbeatAt": "2022-03-17T05:07:44.315368",
+    "startedAt": "2022-03-17T05:07:43.118585",
+    "docker": null,
+    "gpu": "Tesla T4",
+    "gpu_count": 4,
+    "cpu_count": 48,
+    "cuda": "10.0.130",
+    "args": [],
+    "state": "running",
+    "program": "train.py",
+    "codePath": "new/Video-Swin-Transformer/train.py",
+    "git": {
+        "remote": "https://github.com/Xerefic/ModelExtraction.git",
+        "commit": "44c20c83e8ae4b588b5bf32ac18b146be10ead9e"
+    },
+    "email": null,
+    "root": "/home/ubuntu/ModelExtraction",
+    "host": "ip-172-31-34-157",
+    "username": "ubuntu",
+    "executable": "/home/ubuntu/anaconda3/envs/pytorch_latest_p37/bin/python3"
+}

@@ -10,20 +10,23 @@ else
 fi
 
 cd ../../../data/${DATASET}/
-ls ./videos_train | while read class; do \
-  newclass=`echo $class | tr " " "_" `;
-  if [ "${class}" != "${newclass}" ]
-  then
-    mv "videos_train/${class}" "videos_train/${newclass}";
-  fi
-done
+# ls ./videos_train | while read class; do \
+#   newclass=`echo $class | tr " " "_" `;
+#   if [ "${class}" != "${newclass}" ]
+#   then
+#     mv "videos_train/${class}" "videos_train/${newclass}";
+#   fi
+# done
 
-ls ./videos_val | while read class; do \
+ls ./validation | while read class; do \
   newclass=`echo $class | tr " " "_" `;
   if [ "${class}" != "${newclass}" ]
   then
-    mv "videos_val/${class}" "videos_val/${newclass}";
+    mv "validation/${class}" "validation/${newclass}";
   fi
 done
 
 cd ../../tools/data/${DATASET}/
+
+
+# python3 ../resize_video.py ../../../data/kinetics400/validation/ ../../../data/kinetics400/videos --dense --level 2

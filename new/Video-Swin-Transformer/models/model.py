@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import yaml
 
+
 def create_backbone(config):
     backbone_name = config['model']['backbone']['name']
     module = importlib.import_module(f'models.{backbone_name}')
@@ -26,32 +27,42 @@ class Model(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x is a tensor containing a number of tensors. 
 
-        b, f, c, h,w = x.size()
+        b, f, c, h, w = x.size()
+        # print(x.size())
+        # quit()
         x = x.view(b*f,c,h,w)
-        x = self.feature_extractor(x)
-        _, c, h,w = x.size()
+        # x_out = torch.empty((0, 400))
+        # for i in range(v):
+        input = x
+        input = self.feature_extractor(input)
+        _, c, h, w = input.size()
 
         if self.agg == 'weighted':
-            x = x.view(b,f,h,w,c)
-            wt = F.relu(self.weights(x)).view(b,f,c,h,w)
+            input = input.view(b,f,h,w,c)
+            wt = F.relu(self.weights(input)).view(b,f,c,h,w)
             wt = F.softmax(wt, dim=1)
 
-            x = x.view(b,f,c,h,w)
-            x = torch.mul(wt, x)
-            x = torch.sum(x,dim=1)
+            input = input.view(b,f,c,h,w)
+            input = torch.mul(wt, input)
+            input = torch.sum(input,dim=1)
 
         elif self.agg == 'maxpool':
-            x = x.view(b,f,c,h,w)
-            x = torch.amax(x, dim = 1)
+            input = input.view(b,f,c,h,w)
+            input = torch.amax(input, dim = 1)
 
         else:
             raise ValueError('Aggregate method not implemented')
-        
-        x = self.avgpool(x)
-        x = x.view(x.size(0), -1)
-        x = self.fc(x)
-        
-        return x
+    
+        input = self.avgpool(input)
+        input = input.view(input.size(0), -1)
+        # print(input.shape)
+        input = torch.mean(input, dim = 0).unsqueeze(0)
+        input = self.fc(input)
+        # x_out = torch.cat((x_out, input), dim = 0)
+    
+    # x_out = torch.mean(x_out, dim = 0)
+
+        return input
 
     def enable_graybox_mode(self):
         self.feature_extractor.enable_graybox_mode()
